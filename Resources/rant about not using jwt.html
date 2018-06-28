@@ -1,0 +1,298 @@
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <title>Stop using JWT for sessions - joepie91's Ramblings</title>
+        <meta name="viewport" content="width=device-width">
+
+        <!-- syntax highlighting CSS -->
+        <link rel="stylesheet" href="http://cryto.net/~joepie91/blog/css/syntax.css">
+
+        <!-- Custom CSS -->
+        <link rel="stylesheet" href="http://cryto.net/~joepie91/blog/css/main.css?2">
+
+    </head>
+    <body>
+
+      <div class="header">
+        <div class="site">
+          <h1 class="title"><a href="http://cryto.net/~joepie91/blog/">joepie91's Ramblings</a></h1>
+          <a class="extra" href="http://cryto.net/~joepie91/blog/">home</a>
+          <a class="rss" href="http://cryto.net/~joepie91/blog/feed.xml">RSS</a>
+
+          
+	<h2>Stop using JWT for sessions</h2>
+	<p class="meta">13 Jun 2016</p>
+
+        </div>
+      </div>
+      <div class="site">
+        
+	<div class="post">
+		<p><strong>Update - June 19, 2016:</strong> A lot of people have been suggesting the same &quot;solutions&quot; to the problems below, but none of them are practical. I&#39;ve <a href="http://cryto.net/%7Ejoepie91/blog/2016/06/19/stop-using-jwt-for-sessions-part-2-why-your-solution-doesnt-work/">published a new post</a> with a slightly sarcastic flowchart - please have a look at it before suggesting a solution.</p>
+
+<hr>
+
+<p>Unfortunately, lately I&#39;ve seen more and more people recommending to use JWT (<a href="https://en.wikipedia.org/wiki/JSON_Web_Token">JSON Web Tokens</a>) for managing user sessions in their web applications. This is a terrible, <em>terrible</em> idea, and in this post, I&#39;ll explain why.</p>
+
+<p>Just to prevent any confusion, I&#39;ll define a few terms first:</p>
+
+<ul>
+<li><strong>Stateless JWT:</strong> A JWT token that contains the session data, encoded directly into the token.</li>
+<li><strong>Stateful JWT:</strong> A JWT token that contains just a reference or ID for the session. The session data is stored server-side.</li>
+<li><strong>Session token/cookie:</strong> A standard (optionally signed) session ID, like web frameworks have been using for a long time. The session data is stored server-side.</li>
+</ul>
+
+<p>To be clear: This article does <em>not</em> argue that you should <em>never</em> use JWT - just that it isn&#39;t suitable as a session mechanism, and that it is <strong>dangerous</strong> to use it like that. Valid usecases <em>do</em> exist for them, in other areas. At the end of this article, I&#39;ll briefly go into those other usecases.</p>
+
+<h3>A note upfront</h3>
+
+<p>A lot of people mistakenly try to compare &quot;cookies vs. JWT&quot;. This comparison makes no sense at all, and it&#39;s comparing apples to oranges - cookies are a <em>storage mechanism</em>, whereas JWT tokens are <em>cryptographically signed tokens</em>.</p>
+
+<p>They aren&#39;t opposites - rather, they can be used either together or independently. The correct comparisons are &quot;<em>sessions</em> vs. JWT&quot; and &quot;cookies vs. Local Storage&quot;.</p>
+
+<p>In this particular article, I will be comparing sessions to JWT tokens, and occasionally go into &quot;cookies vs. Local Storage&quot; as well where it makes sense to do so.</p>
+
+<h3>Claimed advantages of JWT</h3>
+
+<p>When people recommend JWT, they usually claim one or more of the following benefits:</p>
+
+<ul>
+<li>Easier to (horizontally) scale</li>
+<li>Easier to use</li>
+<li>More flexible</li>
+<li>More secure</li>
+<li>Built-in expiration functionality</li>
+<li>No need to ask users for &#39;cookie consent&#39;</li>
+<li>Prevents CSRF</li>
+<li>Works better on mobile</li>
+<li>Works for users that block cookies</li>
+</ul>
+
+<p>I&#39;ll address each of these claims - and why they are wrong or misleading - individually. Some of the explanations below may be a little vague; that&#39;s primarily because <em>the claims themselves</em> are vague. I&#39;ll happily update it to address more specific claims; you can find my contact details at the bottom of this article.</p>
+
+<h4>Easier to (horizontally) scale</h4>
+
+<p>This is the only claim in the list that is <em>technically</em> somewhat true, but only if you are using <em>stateless</em> JWT tokens. The reality, however, is that almost nobody actually <em>needs</em> this kind of scalability - there are many easier ways to scale up, and unless you are operating at the size of Reddit, you will not need &#39;stateless sessions&#39;.</p>
+
+<p>Some examples of scaling <em>stateful</em> sessions:</p>
+
+<ol>
+<li><strong>Once you run multiple backend processes on a server:</strong> A Redis daemon (on that server) for session storage.</li>
+<li><strong>Once you run on multiple servers:</strong> A dedicated server running Redis just for session storage.</li>
+<li><strong>Once you run on multiple servers, in multiple clusters:</strong> Sticky sessions.</li>
+</ol>
+
+<p>These are all scenarios that are well-supported by existing software. Your application is <em>very</em> unlikely to ever go beyond the second step.</p>
+
+<p>Perhaps you&#39;re thinking that you should &quot;future-proof&quot; your application, in case you <em>do</em> ever scale up beyond that. In practice, however, it&#39;s fairly trivial to replace the session mechanism at a later point, with the only cost being logging out every user <em>once</em>, when you make the transition. It&#39;s just not worth it to implement JWT upfront, especially considering the downsides that I&#39;ll get to later.</p>
+
+<h4>Easier to use</h4>
+
+<p>They really aren&#39;t. You will have to deal with session management yourself, on both the client and the server side, whereas standard session cookies <em>just work</em>, out of the box. JWT isn&#39;t easier in any way.</p>
+
+<h4>More flexible</h4>
+
+<p>I have yet to see somebody actually explain <em>how</em> JWT is more flexible. Almost every major session implementation lets you store arbitrary data for the session <em>anyway</em>, and this is no different from how JWT works. As far as I can tell, this is just used as a buzzword. If you disagree, feel free to contact me with examples.</p>
+
+<h4>More secure</h4>
+
+<p>A lot of people think that JWT tokens are &quot;more secure&quot; because they use cryptography. While signed cookies <em>are</em> more secure than unsigned cookies, this is in no way unique to JWT, and good session implementations use signed cookies as well.</p>
+
+<p>&quot;It uses cryptography&quot; doesn&#39;t magically make something more secure either; it must serve a specific purpose, and be an effective solution for that specific purpose. Incorrectly used cryptography can, in fact, make something <em>less</em> secure.</p>
+
+<p>Another explanation of the &quot;more secure&quot; argument that I hear a lot, is that &quot;they are not sent as a cookie&quot;. This makes absolutely no sense - a cookie is just a HTTP header, and there&#39;s nothing insecure about using cookies. In fact, cookies are <em>especially</em> well-protected against eg. malicious client-side code, something I&#39;ll get into later.</p>
+
+<p>If you are concerned about somebody intercepting your session cookie, you should just be using <a href="https://en.wikipedia.org/wiki/Transport_Layer_Security">TLS</a> instead - <em>any</em> kind of session implementation will be interceptable if you don&#39;t use TLS, including JWT.</p>
+
+<h4>Built-in expiration functionality</h4>
+
+<p>This is nonsense, and not a useful feature. Expiration can be implemented server-side just as well, and many implementations do. Server-side expiration is preferable, in fact - it allows your application to clean up session data that it doesn&#39;t need anymore, something you can&#39;t do if you use stateful JWT tokens and rely on their expiration mechanism.</p>
+
+<h4>No need to ask users for &#39;cookie consent&#39;</h4>
+
+<p>Completely wrong. There&#39;s no such thing as a &quot;cookie law&quot; - the various laws concerning cookies actually cover <em>any</em> kind of persistent identifier that isn&#39;t strictly necessary for the functioning of the service. Any session mechanism you can think of will be covered by this.</p>
+
+<p>In a nutshell:</p>
+
+<ul>
+<li>If you are using a session or token for functional purposes (eg. keeping a user logged in), then you <em>don&#39;t</em> need to ask for user consent, regardless of how you store that session.</li>
+<li>If you are using a session or token for other purposes (eg. analytics or tracking), then you <em>do</em> need to ask for user consent, <em>regardless of how you store that session</em>.</li>
+</ul>
+
+<h4>Prevents CSRF</h4>
+
+<p>It doesn&#39;t, really. There are roughly two ways to store a JWT:</p>
+
+<ul>
+<li><strong>In a cookie:</strong> Now you are still vulnerable to CSRF attacks, and still need protection against it.</li>
+<li><strong>Elsewhere, eg. Local Storage:</strong> Now you are not vulnerable to CSRF attacks, but your application or site now requires JavaScript to work, <em>and</em> you&#39;ve just made yourself vulnerable to an entirely different, potentially <em>worse</em> class of vulnerabilities. More about this below.</li>
+</ul>
+
+<p>The <em>only</em> correct CSRF mitigation is a CSRF token. The session mechanism is not relevant here.</p>
+
+<h4>Works better on mobile</h4>
+
+<p>Nonsense. Every mobile browser still in use supports cookies, and thus sessions. The same goes for every major mobile development framework, and any serious HTTP library. This is just not a problem <em>at all</em>.</p>
+
+<h4>Works for users that block cookies</h4>
+
+<p>Unlikely. Users don&#39;t just block cookies, they typically block <em>all</em> means of persistence. That includes Local Storage, and any other storage mechanism that would allow you to persist a session (with or without using JWT). Whether you use JWT simply doesn&#39;t matter here, it&#39;s an entirely separate problem - and trying to get authentication to work without cookies is a bit of a lost cause.</p>
+
+<p>On top of that, users that block <em>all</em> cookies typically understand that this will break authentication functionality for them, and individually unblock cookies for sites where they care about this. It&#39;s simply not a problem that you, as a web developer, need to be solving; a much better solution is to explain to your users <em>why</em> your site requires cookies to work.</p>
+
+<h3>The drawbacks</h3>
+
+<p>Now that I&#39;ve covered all the common claims and why they&#39;re wrong, you might think &quot;oh, that&#39;s not a big deal, it still doesn&#39;t matter that I use JWT even if it doesn&#39;t <em>help</em> me&quot;, and you&#39;d be wrong. There are quite a few downsides to using JWT as a session mechanism, several of them being <em>serious</em> security issues.</p>
+
+<h4>They take up more space</h4>
+
+<p>JWT tokens are not exactly small. <em>Especially</em> when using stateless JWT tokens, where all the data is encoded directly into the token, you will quickly exceed the size limit of a cookie or URL. You might decide to store them in Local Storage instead - however...</p>
+
+<h4>They are <em>less</em> secure</h4>
+
+<p>When storing your JWT in a cookie, it&#39;s no different from any other session identifier. But when you&#39;re storing your JWT <em>elsewhere</em>, you are now vulnerable to a new class of attacks, described in <a href="http://blog.prevoty.com/does-jwt-put-your-web-app-at-risk">this article</a> (specifically, the &quot;Storing sessions&quot; section):</p>
+
+<blockquote>
+<p>We pick up where we left off: back at local storage, an awesome HTML5 addition that adds a key/value store to browsers and cookies. So should we store JWTs in local storage? It might make sense given the size that these tokens can reach. Cookies typically top out somewhere around 4k of storage. For a large-sized token, a cookie might be out of the question and local storage would be the obvious solution. However, local storage doesn’t provide any of the same security mechanisms that cookies do.</p>
+
+<p>Local storage, unlike cookies, doesn’t send the contents of your data store with every single request. The only way to retrieve data out of local storage is by using JavaScript, which means any attacker supplied JavaScript that passes the Content Security Policy can access and exfiltrate it. Not only that, but JavaScript also doesn’t care or track whether or not the data is sent over HTTPS. As far as JavaScript is concerned, it’s just data and the browser will operate on it like it would any other data.</p>
+
+<p>After all the trouble those engineers went through to make sure nobody is going to make off with our cookie jar, here we are trying to ignore all the fancy tricks they’ve given us. That seems a little backwards to me.</p>
+</blockquote>
+
+<p>Simply put, <strong>using cookies is not optional</strong>, regardless of whether you use JWT or not.</p>
+
+<h4>You cannot invalidate individual JWT tokens</h4>
+
+<p>And there are more security problems. Unlike sessions - which can be invalidated by the server whenever it feels like it - individual stateless JWT tokens cannot be invalidated. By design, they will be valid until they expire, no matter what happens. This means that you cannot, for example, invalidate the session of an attacker after detecting a compromise. You also cannot invalidate old sessions when a user changes their password.</p>
+
+<p>You are essentially powerless, and cannot &#39;kill&#39; a session without building complex (and stateful!) infrastructure to explicitly detect and reject them, defeating the entire point of using stateless JWT tokens to begin with.</p>
+
+<h4>Data goes stale</h4>
+
+<p>Somewhat related to this issue, and <em>yet another</em> potential security issue. Like in a cache, the data in a stateless token will eventually &#39;go stale&#39;, and no longer reflect the latest version of the data in your database.</p>
+
+<p>This can mean that a token contains some outdated information like an old website URL that somebody changed in their profile - but more seriously, it can <em>also</em> mean somebody has a token with a role of <code>admin</code>, even though you&#39;ve just revoked their <code>admin</code> role. Because you can&#39;t invalidate tokens <em>either</em>, there&#39;s no way for you to remove their administrator access, short of shutting down the entire system.</p>
+
+<h4>Implementations are less battle-tested or non-existent</h4>
+
+<p>You might think that all these issues are just with <em>stateless</em> JWT tokens, and you&#39;d be mostly right. However, using a <em>stateful</em> token is basically equivalent to a regular session cookie... but without the battle-tested implementations.</p>
+
+<p>Existing session implementations (eg. <a href="https://github.com/expressjs/session"><code>express-session</code></a> for Express) have been running in production for many, many years, and their security has been improved a lot because of that. You don&#39;t get those benefits when using JWT tokens as makeshift session cookies - you will either have to roll your own implementation (and most likely introduce vulnerabilities in the process), or use a third-party implementation that hasn&#39;t seen much real-world use.</p>
+
+<h3>Conclusion</h3>
+
+<p>Stateless JWT tokens cannot be invalidated or updated, and will introduce either size issues or security issues depending on where you store them. Stateful JWT tokens are functionally the same as session cookies, but without the battle-tested and well-reviewed implementations or client support.</p>
+
+<p>Unless you work on a Reddit-scale application, there&#39;s no reason to be using JWT tokens as a session mechanism. <em>Just use sessions.</em></p>
+
+<h3>So... what is JWT good for, then?</h3>
+
+<p>At the start of this article, I said that there <em>are</em> good usecases for JWT, but that they&#39;re just not suitable as a session mechanism. This still holds true; the usecases where JWT is particularly effective are typically usecases where they are used as a <em>single-use authorization token</em>.</p>
+
+<p>From the <a href="https://tools.ietf.org/html/rfc7519">JSON Web Token specification</a>:</p>
+
+<blockquote>
+<p>JSON Web Token (JWT) is a compact, URL-safe means of representing claims to be transferred between two parties. [...] enabling the claims to be digitally signed or integrity protected with a Message Authentication Code (MAC) and/or encrypted.</p>
+</blockquote>
+
+<p>In this context, &quot;claim&quot; can be something like a &#39;command&#39;, a one-time authorization, or basically any other scenario that you can word as:</p>
+
+<blockquote>
+<p>Hello Server B, Server A told me that I could &lt;claim goes here&gt;, and here&#39;s the (cryptographic) proof.</p>
+</blockquote>
+
+<p>For example, you might run a file-hosting service where the user has to authenticate to download their files, but the files themselves are served by a separate, stateless &quot;download server&quot;. In this case, you might want to have your <em>application server</em> (Server A) issue single-use &quot;download tokens&quot;, that the client can then use to download the file from a <em>download server</em> (Server B).</p>
+
+<p>When using JWT in this manner, there are a few specific properties:</p>
+
+<ul>
+<li><strong>The tokens are short-lived.</strong> They only need to be valid for a few minutes, to allow a client to initiate the download.</li>
+<li><strong>The token is only expected to be used once.</strong> The application server would issue a new token for every download, so any one token is just used to request a file once, and then thrown away. There&#39;s no persistent state, <em>at all</em>.</li>
+<li><strong>The application server still uses sessions.</strong> It&#39;s just the <em>download server</em> that uses tokens to authorize individual downloads, because it doesn&#39;t need persistent state.</li>
+</ul>
+
+<p>As you can see here, it&#39;s completely reasonable to <em>combine</em> sessions and JWT tokens - they each have their own purpose, and sometimes you need both. Just don&#39;t use JWT for <em>persistent</em>, <em>long-lived</em> data.</p>
+
+	</div>
+
+      </div>
+      
+      <div class="pre-footer">
+        <div class="site">
+          
+	<div class="donate">
+		<p>
+			Many of my articles involve <em>years</em> of research and discussion, before a single word is written.<br>
+		</p>
+		<p>
+			If you liked this post, <strong>please consider donating</strong>! Any amount is welcome, no matter how small.
+		</p>
+		<div class="buttons">
+			<form action="https://www.paypal.com/cgi-bin/webscr" method="post">
+				<input type="hidden" name="cmd" value="_s-xclick">
+				<input type="hidden" name="hosted_button_id" value="7V4CE97VK7GZ2">
+				<input class="img" type="image" src="http://cryto.net/~joepie91/blog/attachments/paypal_button.png" border="0" name="submit">
+			</form>
+			<div class="flattr">
+				<script id='fbt3rhq'>(function(i){var f,s=document.getElementById(i);f=document.createElement('iframe');f.src='//api.flattr.com/button/view/?uid=joepie91&button=compact&url='+encodeURIComponent(document.URL);f.title='Flattr';f.height=20;f.width=110;f.style.borderWidth=0;s.parentNode.insertBefore(f,s);})('fbt3rhq');</script>
+			</div>
+			<div class="bitcoin">
+				<a href="bitcoin:1G4JG9oFPmpwzEmSH4gnLCdE8hBprdJuDG">
+					<img src="http://cryto.net/~joepie91/blog/attachments/bitcoin_button.png">
+					1G4JG9oFPmpwzEmSH4gnLCdE8hBprdJuDG
+				</a>
+			</div>
+		</div>
+
+		<hr>
+
+		<div class="license">
+			<strong>This post is licensed under the <a href="http://cryto.net/~joepie91/blog/LICENSE.txt">WTFPL</a>.</strong> You may distribute, use, modify, translate, and license it in any way.
+		</div>
+	</div>
+
+        </div>
+      </div>
+
+      <div class="site">
+        <div class="footer">
+          <div class="contact">
+            <p>
+              Sven Slootweg (joepie91)<br />
+              I do things on the internet.<br />
+              admin@cryto.net
+            </p>
+          </div>
+          <div class="contact">
+            <p>
+              <a href="http://cryto.net/~joepie91">cryto.net/~joepie91</a><br />
+              <a href="https://github.com/joepie91">github.com/joepie91</a><br />
+              <a href="https://twitter.com/joepie91">twitter.com/joepie91</a><br />
+            </p>
+          </div>
+          <div class="subscribe">
+              <p>
+                  <form style="text-align: left; width: 270px; float: right;" action="http://feedburner.google.com/fb/a/mailverify" method="post" target="popupwindow" onsubmit="window.open('http://feedburner.google.com/fb/a/mailverify?uri=joepie91s-ramblings', 'popupwindow', 'scrollbars=yes,width=550,height=520');return true">
+                      Enter your email to subscribe to new posts:<br>
+                      <input type="text" style="width:140px" name="email"/>
+                      <input type="hidden" value="joepie91s-ramblings" name="uri"/>
+                      <input type="hidden" name="loc" value="en_US"/>
+                      <input type="submit" value="Subscribe" /><br>
+                      Delivered by <a href="http://feedburner.google.com" target="_blank">FeedBurner</a>
+                  </form>
+              </p>
+          </div>
+        </div>
+      </div>
+
+    </body>
+</html>
